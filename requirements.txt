@@ -1,0 +1,16 @@
+# CrowdPulse - Phase 1 Dependencies (SIH25165)
+# Note: For NVIDIA GPU acceleration on Windows, PyTorch with CUDA should be installed
+# using the official PyTorch command:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+
+streamlit>=1.38.0
+ultralytics>=8.3.0
+opencv-python>=4.10.0
+numpy>=1.26.0
+pandas>=2.2.0
+plotly>=5.24.0
+scipy>=1.14.0
+pillow>=10.4.0
+sqlalchemy>=2.0.0
+pytest>=8.3.0
+

@@ -1,0 +1,47 @@
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Heavy Model Weights & Checkpoints (keep .gitkeep)
+models/*
+!models/.gitkeep
+*.pt
+*.onnx
+*.engine
+
+# Video Files & Large Datasets (keep .gitkeep)
+data/videos/*
+!data/videos/.gitkeep
+data/datasets/*
+!data/datasets/.gitkeep
+Dataset_CrowdPulse/
+*.parquet
+*.mp4
+*.avi
+*.mov
+
+# Databases and Local Logs
+*.sqlite
+*.sqlite3
+*.db
+*.log
+
+# IDE and Editor Files
+.vscode/
+.idea/
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
