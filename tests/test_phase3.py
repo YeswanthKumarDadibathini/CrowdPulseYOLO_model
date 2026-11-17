@@ -151,3 +151,18 @@ class TestSpatialHeatmap:
         assert analysis["hotspots"][0]["col"] == 0
         assert analysis["grid_annotated_image"].shape == img.shape
 
+    def test_proximity_crush_graph(self, heatmap_gen):
+        img = np.full((400, 400, 3), 80, dtype=np.uint8)
+        # People standing very close together (< 65 pixels)
+        boxes = [
+            {"bbox": [100, 100, 120, 160], "confidence": 0.9},
+            {"bbox": [115, 105, 135, 165], "confidence": 0.9},
+            {"bbox": [110, 120, 130, 180], "confidence": 0.9},
+            {"bbox": [125, 115, 145, 175], "confidence": 0.9},
+        ]
+        annotated, stats = heatmap_gen.generate_proximity_crush_graph(img, boxes, distance_threshold_px=65)
+        assert annotated.shape == img.shape
+        assert stats["total_connections"] > 0
+        assert stats["crush_index"] > 0
+        assert "risk_status" in stats
+

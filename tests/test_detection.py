@@ -105,6 +105,28 @@ class TestCrowdDetector:
         assert result["annotated_image"].shape == dummy_img.shape
         assert result["count"] >= 0
 
+    def test_high_density_sliced_mode(self, detector):
+        dummy_img = np.zeros((480, 640, 3), dtype=np.uint8)
+        result = detector.detect_people(
+            image_rgb=dummy_img,
+            confidence_threshold=0.15,
+            mode="high_density_sliced",
+            draw_annotations=True
+        )
+        assert result["mode_used"] == "high_density_sliced"
+        assert result["count"] >= 0
+
+    def test_calibrated_density_mode(self, detector):
+        dummy_img = np.zeros((480, 640, 3), dtype=np.uint8)
+        result = detector.detect_people(
+            image_rgb=dummy_img,
+            confidence_threshold=0.15,
+            mode="calibrated",
+            draw_annotations=True
+        )
+        assert result["mode_used"] == "calibrated"
+        assert isinstance(result["count"], int)
+
 
 class TestVideoStream:
     """Verifies video creation and streaming frame processing."""

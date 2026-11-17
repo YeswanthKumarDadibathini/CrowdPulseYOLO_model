@@ -1,15 +1,16 @@
 """
-CrowdPulse - Web Application (Phase 4 Multi-Agent Integration)
+CrowdPulse - Optical CCTV Multi-Agent Web Application
 Project: CrowdPulse - Crowd Density Management System (SIH25165)
-Phase: Phase 4 Multi-Agent Coordination
 
 Beginner-Friendly Explanation:
-This Streamlit application provides an interactive web dashboard for:
+This Streamlit application provides an interactive web dashboard for standard
+OPTICAL RGB CCTV cameras (NO thermal/infrared hardware required):
 1. Multi-Zone Dashboard: Overview of 4 monitored zones with real-time risk levels.
 2. Multi-Agent Command Center: Live coordination of Monitor, Anomaly, and Dispatch Agents.
-3. Spatial Heatmap & Bottlenecks: 2D Gaussian density heatmaps and spatial grid hotspots.
-4. Dataset Benchmarking: Test YOLO directly on the 1,198 uploaded crowd images.
-5. Custom Image Upload: Upload any image to detect, count people, and generate heatmaps.
+3. Optical Spatial Density & Crush Graph: Social proximity clustering, 4x4 grid choke-points,
+   and optical density mapping.
+4. Dataset Benchmarking: Test Enhanced Sliced & Calibrated YOLO on the 1,198 crowd images.
+5. Custom Image Upload: Upload any photo for accurate headcount & agent evaluation.
 6. CCTV Video Stream: Process live video feeds with bounding boxes, HUD, and FPS monitoring.
 7. Incident Logs & Analytics: SQLite database logs, time-series charts, and alert management.
 8. Hardware Diagnostics: View Python, PyTorch, CUDA, and GPU hardware status.
@@ -22,7 +23,6 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
 import config
@@ -55,27 +55,26 @@ from utils.environment_check import get_environment_report
 # Page Configuration & Database Initialization
 # ==============================================================================
 st.set_page_config(
-    page_title=f"{config.PROJECT_NAME} - SIH25165 (Full System)",
+    page_title=f"{config.PROJECT_NAME} - SIH25165 (Optical CCTV Multi-Agent)",
     page_icon="👥",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Initialize database and seed mock history if empty
 init_db()
 seed_mock_history_if_empty(num_hours=4)
 
 
 # ==============================================================================
-# Cache Resources (Load YOLO, Coordinator, & Services once)
+# Cache Resources
 # ==============================================================================
-@st.cache_resource(show_spinner="Loading YOLOv8 Model...")
+@st.cache_resource(show_spinner="Loading Optical YOLOv8 Model...")
 def load_detector():
     return CrowdDetector()
 
 
 @st.cache_resource
-def load_heatmap_generator():
+def load_spatial_analyzer():
     return SpatialHeatmapGenerator(grid_rows=4, grid_cols=4)
 
 
@@ -94,12 +93,18 @@ def load_dispatch_services():
 
 
 detector = load_detector()
-heatmap_gen = load_heatmap_generator()
+spatial_analyzer = load_spatial_analyzer()
 coordinator = load_coordinator()
 squad_tracker, gate_controller, signage_service = load_dispatch_services()
 
-# Fetch active alerts for badge in sidebar
 active_alerts = get_active_alerts()
+
+# Helper dictionary mapping UI labels to detector modes
+DETECTION_MODES = {
+    "🎯 High-Density Sliced Mode (Best Headcount Recall)": "high_density_sliced",
+    "📊 Calibrated Crowd Estimator (Ultra-Dense Scenes)": "calibrated",
+    "⚡ Standard Optical Mode (Fastest Real-Time)": "standard",
+}
 
 # ==============================================================================
 # Sidebar Navigation
@@ -107,7 +112,7 @@ active_alerts = get_active_alerts()
 with st.sidebar:
     st.title(f"👥 {config.PROJECT_NAME}")
     st.caption(f"Project ID: **{config.SIH_PROJECT_CODE}**")
-    st.caption(f"Architecture: **Autonomous Multi-Agent System**")
+    st.caption("📷 **Standard Optical RGB CCTV System**")
     st.divider()
 
     alert_badge_text = f" ({len(active_alerts)} 🚨)" if active_alerts else ""
@@ -117,7 +122,7 @@ with st.sidebar:
         [
             "📍 Multi-Zone Overview",
             "🤖 Multi-Agent Command Center",
-            "🔥 Spatial Heatmap & Bottlenecks",
+            "🗺️ Optical Spatial Density & Crush Graph",
             "🖼️ Crowd Dataset Benchmark",
             "📤 Upload Custom Image",
             "🎥 CCTV Video Stream",
@@ -130,9 +135,9 @@ with st.sidebar:
     st.divider()
     st.subheader("System Status")
     device_badge = "🚀 CUDA (GPU)" if detector.device == "cuda" else "⚙️ CPU Mode"
-    st.write(f"- **Engine:** YOLOv8n (`person`)")
+    st.write("- **Camera Spec:** Standard RGB Optical")
+    st.write(f"- **Engine:** Enhanced YOLOv8n (`person`)")
     st.write(f"- **Active Device:** `{device_badge}`")
-    st.write(f"- **Multi-Agent Bus:** Active")
     st.write(f"- **Active Incidents:** `{len(active_alerts)}`")
 
     st.divider()
@@ -147,8 +152,8 @@ if menu == "📍 Multi-Zone Overview":
     st.markdown(f"**SIH Problem Statement:** `{config.SIH_PROJECT_CODE}` | *{config.PROJECT_TAGLINE}*")
 
     st.info(
-        "ℹ️ **Full Multi-Agent System Active:** Monitor, Anomaly Detection, and Dispatch Agents are running. "
-        "Alerts are automatically triggered when zone capacity breaches 80% or bottlenecks form."
+        "📷 **100% Standard Optical CCTV Compatible:** Works with ordinary security cameras and webcams—no "
+        "expensive thermal or infrared hardware required. Autonomous Multi-Agent system is active."
     )
 
     if active_alerts:
@@ -203,7 +208,7 @@ if menu == "📍 Multi-Zone Overview":
 
 
 # ==============================================================================
-# VIEW 2: Multi-Agent Command Center (Phase 4 Core)
+# VIEW 2: Multi-Agent Command Center
 # ==============================================================================
 elif menu == "🤖 Multi-Agent Command Center":
     st.title("🤖 Multi-Agent Command Center")
@@ -212,7 +217,6 @@ elif menu == "🤖 Multi-Agent Command Center":
         "**Monitor Agent** measures telemetry $\\to$ **Anomaly Agent** detects stampede/surge threats $\\to$ **Dispatch Agent** issues tactical orders."
     )
 
-    # Agent Status Cards
     ag_col1, ag_col2, ag_col3 = st.columns(3)
     with ag_col1:
         with st.container(border=True):
@@ -238,7 +242,6 @@ elif menu == "🤖 Multi-Agent Command Center":
 
     st.divider()
 
-    # Interactive Scenario Simulator
     st.subheader("⚡ Live Incident Simulation & Agent Reaction")
     st.caption("Trigger synthetic crowd events to evaluate how the multi-agent system reacts in real time.")
 
@@ -259,7 +262,6 @@ elif menu == "🤖 Multi-Agent Command Center":
             [f"{z['name']} ({z['id']})" for z in config.DEFAULT_ZONES]
         )
 
-    # Extract clean scenario string and zone id
     sc_code = "SURGE"
     if "Bottleneck" in scenario:
         sc_code = "BOTTLENECK"
@@ -280,7 +282,6 @@ elif menu == "🤖 Multi-Agent Command Center":
 
         st.success(f"✅ **Scenario Executed:** {sim_result['scenario_description']}")
 
-        # Agent reaction tabs
         t_telemetry, t_anomaly, t_dispatch = st.tabs(["1️⃣ Monitor Agent Telemetry", "2️⃣ Anomaly Agent Findings", "3️⃣ Dispatch Action Orders"])
 
         with t_telemetry:
@@ -295,7 +296,6 @@ elif menu == "🤖 Multi-Agent Command Center":
         with t_anomaly:
             anom = sim_result["anomaly"]
             if anom:
-                sev_color = "red" if anom["severity"] in ["CRITICAL", "HIGH"] else "orange"
                 st.error(f"🚨 **{anom['severity']} THREAT DETECTED:** {anom['anomaly_type']}")
                 st.write(f"**Confidence Score:** `{int(anom['confidence'] * 100)}%`")
                 st.write(f"**Description:** {anom['description']}")
@@ -316,12 +316,10 @@ elif menu == "🤖 Multi-Agent Command Center":
 
     st.divider()
 
-    # Central Message Bus Feed & Field Equipment
     tab_bus, tab_field = st.tabs(["💬 Inter-Agent Message Bus Feed", "🛡️ Field Equipment & Squad Tracker"])
 
     with tab_bus:
         st.subheader("Central Event Bus Log")
-        st.caption("Live feed of JSON messages exchanged between Monitor, Anomaly, and Dispatch Agents.")
         recent_msgs = coordinator.get_recent_messages(limit=15)
         for msg in recent_msgs:
             sender_emoji = "👁️" if "Monitor" in msg["sender"] else ("🧠" if "Anomaly" in msg["sender"] else "⚡")
@@ -344,19 +342,19 @@ elif menu == "🤖 Multi-Agent Command Center":
 
 
 # ==============================================================================
-# VIEW 3: Spatial Heatmap & Bottlenecks
+# VIEW 3: Optical Spatial Density & Crush Graph (Replaces Thermal Detection)
 # ==============================================================================
-elif menu == "🔥 Spatial Heatmap & Bottlenecks":
-    st.title("🔥 Spatial Heatmap & Bottleneck Hotspot Analysis")
-    st.markdown(
-        "Detect where crowds are clumping within a zone using **2D Gaussian density heatmaps** "
-        "and **4x4 spatial grid partitioning** to pinpoint dangerous choke points."
+elif menu == "🗺️ Optical Spatial Density & Crush Graph":
+    st.title("🗺️ Optical CCTV Spatial Density & Proximity Crush Analysis")
+    st.info(
+        "📷 **No Thermal Hardware Required:** Every analysis below is computed purely from **standard RGB optical CCTV cameras** "
+        "using Social Proximity Clustering, Spatial Grid Choke-Point Detection, and Optical Density Gradients."
     )
 
     datasets = get_available_datasets()
     source_choice = st.radio(
-        "Choose Heatmap Input Source:",
-        ["Sample from Uploaded Crowd Dataset", "Upload Custom Image"],
+        "Choose Input CCTV Source:",
+        ["Sample from Uploaded Crowd Dataset", "Upload Custom Optical Image"],
         horizontal=True,
     )
 
@@ -373,8 +371,8 @@ elif menu == "🔥 Spatial Heatmap & Bottlenecks":
         image_rgb, s_meta = load_dataset_sample(datasets[sel_dataset], int(s_idx))
         st.caption(f"**Image:** `{s_meta['file_name']}` | **Ground Truth Count:** `{s_meta['ground_truth_count']} people`")
 
-    elif source_choice == "Upload Custom Image":
-        heat_upload = st.file_uploader("Upload Image", type=["jpg", "jpeg", "png"])
+    elif source_choice == "Upload Custom Optical Image":
+        heat_upload = st.file_uploader("Upload Standard CCTV Image", type=["jpg", "jpeg", "png"])
         if heat_upload:
             pil_img = Image.open(heat_upload).convert("RGB")
             image_rgb = np.array(pil_img)
@@ -382,57 +380,79 @@ elif menu == "🔥 Spatial Heatmap & Bottlenecks":
     if image_rgb is not None:
         p_c1, p_c2, p_c3 = st.columns(3)
         with p_c1:
-            heat_conf = st.slider("YOLO Detection Confidence:", 0.10, 0.90, 0.25, 0.05)
+            mode_label = st.selectbox("Headcount Accuracy Mode:", list(DETECTION_MODES.keys()), index=0)
+            selected_mode = DETECTION_MODES[mode_label]
         with p_c2:
-            heat_sigma = st.slider("Gaussian Blur Radius (Sigma):", 10, 50, 25, 5)
+            det_conf = st.slider("Detection Confidence Cutoff:", 0.05, 0.80, 0.15, 0.05)
         with p_c3:
-            heat_alpha = st.slider("Heatmap Overlay Opacity:", 0.10, 0.90, 0.45, 0.05)
+            prox_dist = st.slider("Crush Proximity Threshold (pixels):", 30, 120, 65, 5)
 
-        if st.button("🚀 Generate Spatial Heatmap & Bottlenecks", type="primary"):
-            with st.spinner("Running YOLO detection and Gaussian density accumulation..."):
-                det_result = detector.detect_people(image_rgb, confidence_threshold=heat_conf, draw_annotations=True)
+        if st.button("🚀 Run Optical Spatial & Crush Analysis", type="primary"):
+            with st.spinner("Running Enhanced Optical Detection & Proximity Clustering..."):
+                det_result = detector.detect_people(
+                    image_rgb,
+                    confidence_threshold=det_conf,
+                    mode=selected_mode,
+                    draw_annotations=True,
+                )
                 boxes = det_result["boxes"]
 
-                # 1. Generate Gaussian Heatmap
-                blended_heat, raw_heat = heatmap_gen.generate_heatmap(
-                    image_rgb,
-                    boxes,
-                    gaussian_sigma=heat_sigma,
-                    alpha=heat_alpha,
+                # 1. Social Proximity & Crush Graph (Optical CCTV Stampede Prevention)
+                prox_img, prox_stats = spatial_analyzer.generate_proximity_crush_graph(
+                    image_rgb, boxes, distance_threshold_px=prox_dist
                 )
 
-                # 2. Analyze 4x4 Spatial Grid
-                grid_analysis = heatmap_gen.analyze_spatial_grid(image_rgb, boxes)
+                # 2. 4x4 Spatial Choke-Point Grid
+                grid_analysis = spatial_analyzer.analyze_spatial_grid(image_rgb, boxes)
+
+                # 3. Optical Density Concentration Overlay (Software-computed)
+                opt_density_img, _ = spatial_analyzer.generate_optical_density_map(
+                    image_rgb, boxes, gaussian_sigma=25, alpha=0.45
+                )
 
             # Summary Metrics
             sm1, sm2, sm3, sm4 = st.columns(4)
-            sm1.metric("Total Count", f"{det_result['count']} persons")
-            sm2.metric("Bottleneck Detected", "🚨 YES (High Risk)" if grid_analysis["bottleneck_detected"] else "✅ No")
-            sm3.metric("Hotspot Cells", f"{len(grid_analysis['hotspots'])} cells")
-            sm4.metric("Inference Time", f"{det_result['inference_time_ms']} ms")
+            sm1.metric("Headcount Estimate", f"{det_result['count']} persons", f"{det_result['detected_boxes_count']} boxes")
+            sm2.metric("Crush Risk Index", f"{prox_stats['crush_index']}", prox_stats["risk_status"][:20])
+            sm3.metric("Choke-Point Sectors", f"{len(grid_analysis['hotspots'])} sectors")
+            sm4.metric("Inference Latency", f"{det_result['inference_time_ms']} ms")
 
-            # Side-by-Side Visuals
             st.divider()
-            v1, v2 = st.columns(2)
-            with v1:
-                st.subheader("🔥 Continuous Gaussian Thermal Heatmap")
-                st.image(blended_heat, caption="Thermal Density Overlay (Blue = Low, Red = Extreme Congestion)", use_container_width=True)
-            with v2:
-                st.subheader("📐 4x4 Spatial Grid Bottleneck Detection")
-                st.image(grid_analysis["grid_annotated_image"], caption="Spatial Grid (Red highlight = Congested Choke Point)", use_container_width=True)
+            tab_prox, tab_grid, tab_grad = st.tabs([
+                "🔗 Social Proximity & Crush Graph",
+                "📐 4x4 Choke-Point Sector Grid",
+                "🌈 Software Optical Density Overlay"
+            ])
 
-            if grid_analysis["hotspots"]:
-                st.error("⚠️ **Identified Congestion Hotspots:**")
-                hotspot_df = pd.DataFrame(grid_analysis["hotspots"])
-                st.dataframe(hotspot_df[["cell_name", "count", "crowd_share_pct", "status"]], hide_index=True)
+            with tab_prox:
+                st.subheader("Social Proximity & Physical Crush Graph")
+                st.caption("Connects individuals standing within critical proximity (Red = Extreme crush risk, Yellow = Caution, Green = Safe distance).")
+                st.image(prox_img, caption=f"Status: {prox_stats['risk_status']} | Close Contact Pairs: {prox_stats['total_connections']}", use_container_width=True)
+
+            with tab_grid:
+                st.subheader("4x4 Spatial Sector Choke-Point Grid")
+                st.caption("Divides standard CCTV camera view into 16 physical sectors to pinpoint bottlenecks at gates and turnstiles.")
+                st.image(grid_analysis["grid_annotated_image"], caption="Red Highlights = Congested Bottleneck Choke Points", use_container_width=True)
+
+                if grid_analysis["hotspots"]:
+                    st.error("⚠️ **Identified Bottleneck Sectors:**")
+                    hotspot_df = pd.DataFrame(grid_analysis["hotspots"])
+                    st.dataframe(hotspot_df[["cell_name", "count", "crowd_share_pct", "status"]], hide_index=True)
+
+            with tab_grad:
+                st.subheader("Software Optical Density Gradient (RGB Camera)")
+                st.caption("Calculated purely via software Gaussian density estimation on detected coordinates—no thermal camera needed.")
+                st.image(opt_density_img, caption="Optical Density Distribution", use_container_width=True)
 
 
 # ==============================================================================
-# VIEW 4: Crowd Dataset Benchmark
+# VIEW 4: Crowd Dataset Benchmark (With Enhanced Accuracy Modes)
 # ==============================================================================
 elif menu == "🖼️ Crowd Dataset Benchmark":
-    st.title("🖼️ Uploaded Crowd Dataset Benchmark")
-    st.markdown("Test YOLO crowd detection directly on the **1,198 images** in `Dataset_CrowdPulse/`.")
+    st.title("🖼️ Uploaded Crowd Dataset Benchmark (Enhanced Headcount)")
+    st.markdown(
+        "Test our upgraded **High-Density Sliced Inference** and **Optical Calibration** on the **1,198 images** in `Dataset_CrowdPulse/`."
+    )
 
     datasets = get_available_datasets()
     if not datasets:
@@ -467,24 +487,30 @@ elif menu == "🖼️ Crowd Dataset Benchmark":
             f"**Part:** `{meta_row['part']}` | **Ground Truth Count:** `{gt_count} persons`"
         )
 
-        conf_slider = st.slider("YOLO Detection Confidence Threshold:", 0.10, 0.90, 0.25, 0.05)
+        b_c1, b_c2 = st.columns(2)
+        with b_c1:
+            b_mode_label = st.selectbox("Detection Accuracy Engine:", list(DETECTION_MODES.keys()), index=0)
+            b_mode = DETECTION_MODES[b_mode_label]
+        with b_c2:
+            conf_slider = st.slider("Confidence Threshold (Lower catches small heads):", 0.05, 0.80, 0.15, 0.05)
 
-        if st.button("🚀 Run YOLO Crowd Detection on Sample", type="primary"):
-            with st.spinner("Extracting image and running YOLO inference..."):
+        if st.button("🚀 Run Enhanced Headcount Detection", type="primary"):
+            with st.spinner("Running High-Density Optical Inference..."):
                 img_rgb, sample_meta = load_dataset_sample(selected_path, int(sample_idx))
                 result = detector.detect_people(
                     image_rgb=img_rgb,
                     confidence_threshold=conf_slider,
+                    mode=b_mode,
                     draw_annotations=True,
                 )
 
-            yolo_count = result["count"]
-            abs_diff = abs(yolo_count - gt_count)
+            pred_count = result["count"]
+            abs_diff = abs(pred_count - gt_count)
 
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Ground Truth Count", f"{gt_count} persons")
-            m2.metric("YOLO Detected Count", f"{yolo_count} persons", delta=f"{yolo_count - gt_count:+d} diff")
-            m3.metric("Absolute Count Error", f"{abs_diff} persons")
+            m2.metric("CrowdPulse Headcount", f"{pred_count} persons", delta=f"{pred_count - gt_count:+d} diff")
+            m3.metric("Direct Boxes Found", f"{result['detected_boxes_count']} boxes")
             m4.metric("Inference Time", f"{result['inference_time_ms']} ms", f"on {result['device_used']}")
 
             st.divider()
@@ -493,29 +519,31 @@ elif menu == "🖼️ Crowd Dataset Benchmark":
                 st.subheader("Original Dataset Image")
                 st.image(img_rgb, caption=f"Ground Truth: {gt_count} people", use_container_width=True)
             with c_annot:
-                st.subheader("YOLO Person Detections")
-                st.image(result["annotated_image"], caption=f"Detected: {yolo_count} people ({result['risk_badge']})", use_container_width=True)
+                st.subheader(f"Detections ({b_mode_label})")
+                st.image(result["annotated_image"], caption=f"Estimated: {pred_count} people ({result['risk_badge']})", use_container_width=True)
 
 
 # ==============================================================================
 # VIEW 5: Custom Image Upload
 # ==============================================================================
 elif menu == "📤 Upload Custom Image":
-    st.title("📤 Custom Image Crowd Detection")
-    st.markdown("Upload any photo to count people, run multi-agent evaluation, and log readings.")
+    st.title("📤 Custom Optical CCTV Image Detection")
+    st.markdown("Upload any photo to test enhanced headcount accuracy, proximity crush risk, and multi-agent alerts.")
 
     uploaded_file = st.file_uploader("Upload Image File", type=["jpg", "jpeg", "png", "webp"])
 
-    u_col1, u_col2 = st.columns(2)
+    u_col1, u_col2, u_col3 = st.columns(3)
     with u_col1:
-        u_conf = st.slider("Confidence Cutoff:", 0.10, 0.90, 0.25, 0.05)
+        u_mode_label = st.selectbox("Detection Mode:", list(DETECTION_MODES.keys()), index=0)
+        u_mode = DETECTION_MODES[u_mode_label]
     with u_col2:
+        u_conf = st.slider("Confidence Cutoff:", 0.05, 0.80, 0.15, 0.05)
+    with u_col3:
         u_zone = st.selectbox(
             "Assign Reading to Monitored Zone:",
             [f"{z['name']} (ID: {z['id']}, Cap: {z['capacity_limit']})" for z in config.DEFAULT_ZONES]
         )
 
-    # Extract chosen zone id and capacity
     selected_zone_id = config.DEFAULT_ZONES[0]["id"]
     selected_cap = config.DEFAULT_ZONES[0]["capacity_limit"]
     for z in config.DEFAULT_ZONES:
@@ -527,18 +555,17 @@ elif menu == "📤 Upload Custom Image":
         pil_image = Image.open(uploaded_file).convert("RGB")
         image_rgb = np.array(pil_image)
 
-        with st.spinner("Running YOLO detection & Multi-Agent evaluation..."):
+        with st.spinner("Running Enhanced Optical Detection & Multi-Agent Evaluation..."):
             result = detector.detect_people(
                 image_rgb=image_rgb,
                 confidence_threshold=u_conf,
                 capacity_limit=selected_cap,
+                mode=u_mode,
                 draw_annotations=True,
             )
 
-            # Analyze spatial grid for bottlenecks
-            grid_res = heatmap_gen.analyze_spatial_grid(image_rgb, result["boxes"])
+            grid_res = spatial_analyzer.analyze_spatial_grid(image_rgb, result["boxes"])
 
-            # Run Multi-Agent Coordinator cycle
             agent_output = coordinator.process_zone_update(
                 zone_id=selected_zone_id,
                 current_count=result["count"],
@@ -548,14 +575,13 @@ elif menu == "📤 Upload Custom Image":
                 inference_latency_ms=result["inference_time_ms"],
             )
 
-        # Metrics
         mc1, mc2, mc3, mc4 = st.columns(4)
-        mc1.metric("People Count", f"{result['count']} persons")
+        mc1.metric("Headcount", f"{result['count']} persons")
         mc2.metric("Occupancy", f"{result['occupancy_pct']}%", result["risk_badge"])
-        mc3.metric("Bottleneck", "🚨 Yes" if grid_res["bottleneck_detected"] else "No")
+        mc3.metric("Bottleneck Choke", "🚨 Yes" if grid_res["bottleneck_detected"] else "No")
         mc4.metric("Agent Status", "Evaluated ✅")
 
-        st.image(result["annotated_image"], caption="Annotated Crowd Detection Output", use_container_width=True)
+        st.image(result["annotated_image"], caption="Annotated Optical Crowd Detection Output", use_container_width=True)
 
         if agent_output["anomaly"]:
             st.error(f"🚨 **{agent_output['anomaly']['severity']} Alert Detected:** {agent_output['anomaly']['description']}")
@@ -569,8 +595,8 @@ elif menu == "📤 Upload Custom Image":
 # VIEW 6: CCTV Video Stream
 # ==============================================================================
 elif menu == "🎥 CCTV Video Stream":
-    st.title("🎥 Real-Time CCTV Video Stream Processing")
-    st.markdown("Run automated crowd detection frame-by-frame on simulated or recorded CCTV footage.")
+    st.title("🎥 Real-Time Optical CCTV Video Stream")
+    st.markdown("Run automated crowd detection frame-by-frame on standard optical CCTV footage.")
 
     v_col1, v_col2 = st.columns([2, 1])
     with v_col1:
@@ -586,7 +612,7 @@ elif menu == "🎥 CCTV Video Stream":
 
     with v_col2:
         frame_skip = st.slider("Frame Skip (Higher = faster playback):", 1, 5, 2)
-        v_conf = st.slider("Video Confidence:", 0.15, 0.85, 0.25, 0.05)
+        v_conf = st.slider("Video Confidence:", 0.10, 0.80, 0.18, 0.05)
 
     if st.button("▶️ Start Video Detection Stream", type="primary"):
         if uploaded_video is not None:
