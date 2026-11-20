@@ -1,20 +1,19 @@
 """
-CrowdPulse - Optical CCTV Crowd Detection & People Counter (Enhanced)
+CrowdPulse - Hybrid Optical CCTV Crowd Detection & Deep Headcount Engine
 Project: CrowdPulse - Crowd Density Management System (SIH25165)
 
 Beginner-Friendly Explanation:
-This module runs computer vision person detection on STANDARD OPTICAL RGB CCTV cameras
-(such as regular security cameras, webcams, or phone videos).
-NO specialized thermal, infrared, or depth hardware is needed.
+This module combines TWO complementary pretrained deep learning models to solve
+both spatial localization AND accurate dense crowd headcounting on standard
+OPTICAL RGB CCTV cameras (NO thermal or infrared hardware required):
 
-To solve inaccurate headcounts in dense crowds:
-1. Standard Mode: Fast single-pass inference (best for real-time video at gates/corridors).
-2. High-Density Sliced Mode: Splits high-resolution frames into overlapping windows.
-   This prevents small, distant heads from being lost when shrinking the image,
-   boosting detection recall by 2x to 4x in crowded areas.
-3. Optical Density Calibrator: In ultra-dense crowds (like rallies or festivals where heads
-   overlap at 4x4 pixels), combines bounding boxes with optical spatial texture energy
-   to provide a calibrated headcount estimate.
+1. Pretrained Object Detector (YOLOv8s / YOLOv8n):
+   Locates individual person bounding boxes [x1, y1, x2, y2] for the Social Proximity
+   Crush Graph, 4x4 Choke-Point Grid, and live CCTV HUD overlays.
+2. Fine-Tuned Deep Crowd Counter (CrowdPulseCountNet — ConvNeXt-Tiny / ResNet-50):
+   A pretrained ImageNet CNN backbone fine-tuned directly on your 1,198-image
+   Dataset_CrowdPulse benchmark to predict accurate headcounts even in massive
+   crowds (100 to 3,000+ people) where bounding boxes overlap.
 """
 
 import os
@@ -33,36 +32,57 @@ import torch
 from ultralytics import YOLO
 
 import config
+from detection.crowd_counter_model import CrowdCountPredictor
 
 
 class CrowdDetector:
-    """Optical CCTV Crowd Density and Person Detection Engine."""
+    """Hybrid Optical CCTV Crowd Density and Person Detection Engine."""
 
-    def __init__(self, model_path: Optional[Union[str, Path]] = None):
-        """Initializes the detector and loads YOLO model weights."""
+    def __init__(
+        self,
+        model_path: Optional[Union[str, Path]] = None,
+        count_checkpoint_path: Optional[Union[str, Path]] = None,
+    ):
+        """Initializes YOLO object detector and optional fine-tuned deep crowd counter."""
         if model_path is None:
-            primary = config.MODELS_DIR / "yolov8n.pt"
-            fallback = config.BASE_DIR / "yolov8n.pt"
-            self.model_path = primary if primary.exists() else fallback
+            # Prefer higher-accuracy yolov8s.pt if available, else yolov8n.pt
+            candidates = [
+                config.MODELS_DIR / "yolov8s.pt",
+                config.MODELS_DIR / "yolov8n.pt",
+                config.BASE_DIR / "yolov8n.pt",
+            ]
+            self.model_path = next((p for p in candidates if p.exists()), candidates[-1])
         else:
             self.model_path = Path(model_path)
 
         if not self.model_path.exists():
             raise FileNotFoundError(
                 f"YOLO model weights not found at {self.model_path}. "
-                f"Ensure 'yolov8n.pt' is present in the models/ directory."
+                f"Ensure 'yolov8s.pt' or 'yolov8n.pt' is present in the models/ directory."
             )
 
-        # Device selection: automatically uses GPU if CUDA is available, otherwise CPU
+        # Device selection: automatically uses NVIDIA CUDA GPU if available, otherwise CPU
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         # Load YOLO model
         self.model = YOLO(str(self.model_path))
         self.model.to(self.device)
 
-        # Warm up model once
+        # Warm up YOLO once
         dummy = np.zeros((320, 320, 3), dtype=np.uint8)
         self.model(dummy, classes=[0], verbose=False)
+
+        # Load fine-tuned CrowdPulseCountNet if checkpoint exists
+        self.count_predictor = CrowdCountPredictor(checkpoint_path=count_checkpoint_path)
+
+    @property
+    def has_trained_counter(self) -> bool:
+        """Returns True if the custom fine-tuned deep crowd counter is loaded."""
+        return self.count_predictor.is_ready
+
+    @property
+    def yolo_model_name(self) -> str:
+        return self.model_path.name
 
     def classify_density(
         self,
@@ -73,11 +93,11 @@ class CrowdDetector:
         if capacity_limit and capacity_limit > 0:
             occupancy_pct = (count / capacity_limit) * 100.0
             if occupancy_pct < config.DENSITY_THRESHOLDS["NORMAL"]:
-                return "NORMAL", "🟢 Safe", (46, 204, 113)      # Emerald Green
+                return "NORMAL", "🟢 Safe", (46, 204, 113)
             elif occupancy_pct < config.DENSITY_THRESHOLDS["MODERATE"]:
-                return "MODERATE", "🟡 Caution", (241, 196, 15)   # Amber Yellow
+                return "MODERATE", "🟡 Caution", (241, 196, 15)
             else:
-                return "CRITICAL", "🔴 Overcrowded", (231, 76, 60) # Crimson Red
+                return "CRITICAL", "🔴 Overcrowded", (231, 76, 60)
         else:
             if count <= 15:
                 return "NORMAL", "🟢 Low Density", (46, 204, 113)
@@ -92,7 +112,7 @@ class CrowdDetector:
         confidence_threshold: float,
         imgsz: int = 640
     ) -> List[Dict]:
-        """Runs a single forward pass with adaptive resolution."""
+        """Runs a single YOLO forward pass with adaptive resolution."""
         results = self.model(
             image_rgb,
             conf=confidence_threshold,
@@ -120,18 +140,19 @@ class CrowdDetector:
         overlap: float = 0.25,
         iou_threshold: float = 0.45
     ) -> List[Dict]:
-        """Runs high-density sliced inference by splitting the frame into overlapping tiles.
-
-        Drastically improves detection of small, distant, and occluded people in crowd scenes.
-        """
+        """Runs high-density sliced YOLO inference by splitting frame into overlapping tiles."""
         h, w = image_rgb.shape[:2]
         all_boxes = []
 
-        # 1. Full-image high-resolution pass for larger figures in foreground
-        full_boxes = self._detect_single_pass(image_rgb, confidence_threshold, imgsz=max(640, min(w, 1024)))
+        # 1. Full-image high-resolution pass
+        full_boxes = self._detect_single_pass(
+            image_rgb,
+            confidence_threshold,
+            imgsz=max(640, min(w, 1024)),
+        )
         all_boxes.extend(full_boxes)
 
-        # 2. Sliced tile passes for distant / clustered figures
+        # 2. Overlapping tile passes for small / distant people
         step_y = int(tile_size * (1 - overlap))
         step_x = int(tile_size * (1 - overlap))
 
@@ -153,7 +174,7 @@ class CrowdDetector:
         if not all_boxes:
             return []
 
-        # 3. Merge overlapping tile detections using Non-Maximum Suppression (NMS)
+        # 3. Merge overlapping boxes using NMS
         xywh = []
         scores = []
         for b in all_boxes:
@@ -161,7 +182,12 @@ class CrowdDetector:
             xywh.append([int(bx1), int(by1), int(bx2 - bx1), int(by2 - by1)])
             scores.append(float(b["confidence"]))
 
-        indices = cv2.dnn.NMSBoxes(xywh, scores, score_threshold=confidence_threshold, nms_threshold=iou_threshold)
+        indices = cv2.dnn.NMSBoxes(
+            xywh,
+            scores,
+            score_threshold=confidence_threshold,
+            nms_threshold=iou_threshold,
+        )
         if len(indices) == 0:
             return []
 
@@ -178,37 +204,20 @@ class CrowdDetector:
         detected_count: int,
         boxes: List[Dict]
     ) -> int:
-        """Optical crowd density regressor: in extremely dense crowds (festivals/rallies),
-
-        heads can be 4x4 pixels where bounding boxes merge. This calculates optical texture
-        energy to calibrate headcount accurately.
-        """
+        """Fallback optical crowd density estimator when trained CNN checkpoint is absent."""
         gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
         h, w = gray.shape
-
-        # High-frequency spatial gradient analysis (Laplacian edge energy)
         lap = cv2.Laplacian(gray, cv2.CV_64F)
         edge_energy = np.abs(lap)
-
-        # Exclude sky / blank floor: find crowd region mask based on local variance
         blur_energy = cv2.GaussianBlur(edge_energy, (31, 31), 10)
         crowd_mask = blur_energy > np.mean(blur_energy)
 
-        active_crowd_pixels = np.sum(crowd_mask)
-        total_pixels = h * w
-        crowd_coverage_ratio = active_crowd_pixels / total_pixels
-
-        # Estimate density from texture peaks in active crowd areas
+        crowd_coverage_ratio = np.sum(crowd_mask) / max(h * w, 1)
         if crowd_coverage_ratio > 0.15:
-            # Detect local intensity peaks (head dot candidates)
             local_max = cv2.dilate(gray, np.ones((5, 5), np.uint8))
             peaks = (gray == local_max) & crowd_mask & (gray > 40)
             peak_count = int(np.sum(peaks))
-
-            # Calibrated blend: bounding boxes for clear figures + optical peaks for occluded background
-            calibrated = int(max(detected_count, (detected_count * 0.4) + (peak_count * 0.6)))
-            return calibrated
-
+            return int(max(detected_count, (detected_count * 0.4) + (peak_count * 0.6)))
         return detected_count
 
     def detect_people(
@@ -217,46 +226,62 @@ class CrowdDetector:
         confidence_threshold: float = 0.15,
         capacity_limit: Optional[int] = None,
         draw_annotations: bool = True,
-        mode: str = "standard",  # "standard", "high_density_sliced", "calibrated"
+        mode: str = "standard",  # "trained_hybrid", "high_density_sliced", "calibrated", "standard"
         fps: Optional[float] = None
     ) -> Dict:
-        """Runs Optical CCTV crowd person detection.
+        """Runs Optical CCTV crowd detection and headcounting.
 
-        Parameters:
-            image_rgb (np.ndarray): Input standard optical CCTV frame (H, W, 3)
-            confidence_threshold (float): Minimum confidence cutoff (default 0.15 for crowd detection)
-            capacity_limit (int, optional): Safe physical capacity limit of the monitored area
-            draw_annotations (bool): Whether to draw boxes and HUD on the image
-            mode (str): "standard" (fast), "high_density_sliced" (high recall), or "calibrated"
-            fps (float, optional): Frames-per-second for video feeds
+        Modes:
+            - "trained_hybrid": Uses fine-tuned CrowdPulseCountNet (ConvNeXt-Tiny / ResNet-50)
+                                for accurate dense headcount + YOLOv8 for person bounding boxes.
+            - "high_density_sliced": Multi-tile sliced YOLO inference for maximum box recall.
+            - "calibrated": Uses trained neural model if loaded, else optical density fallback.
+            - "standard": Fast single-pass YOLO for real-time video streams.
         """
         start_time = time.perf_counter()
+        neural_info = None
 
-        # Run selected detection mode
-        if mode == "high_density_sliced":
+        if mode == "trained_hybrid":
+            # Fast YOLO pass for spatial boxes & proximity crush graph
+            boxes_data = self._detect_single_pass(
+                image_rgb,
+                confidence_threshold=confidence_threshold,
+                imgsz=max(640, min(image_rgb.shape[1], 1024)),
+            )
+            detected_count = len(boxes_data)
+
+            if self.has_trained_counter:
+                neural_info = self.count_predictor.predict(image_rgb, use_tta=True)
+                final_count = neural_info["predicted_count"]
+            else:
+                final_count = detected_count
+
+        elif mode == "high_density_sliced":
             boxes_data = self._detect_sliced(image_rgb, confidence_threshold=confidence_threshold)
-        elif mode == "calibrated":
-            boxes_data = self._detect_sliced(image_rgb, confidence_threshold=confidence_threshold)
-        else:
-            # Standard single pass
-            boxes_data = self._detect_single_pass(image_rgb, confidence_threshold=confidence_threshold)
-
-        inference_time_ms = (time.perf_counter() - start_time) * 1000.0
-        detected_count = len(boxes_data)
-
-        # Calibrated headcount for dense scenes
-        if mode == "calibrated":
-            final_count = self._estimate_dense_crowd_calibration(image_rgb, detected_count, boxes_data)
-        else:
+            detected_count = len(boxes_data)
             final_count = detected_count
 
+        elif mode == "calibrated":
+            boxes_data = self._detect_sliced(image_rgb, confidence_threshold=confidence_threshold)
+            detected_count = len(boxes_data)
+            if self.has_trained_counter:
+                neural_info = self.count_predictor.predict(image_rgb, use_tta=True)
+                final_count = neural_info["predicted_count"]
+            else:
+                final_count = self._estimate_dense_crowd_calibration(image_rgb, detected_count, boxes_data)
+
+        else:
+            boxes_data = self._detect_single_pass(image_rgb, confidence_threshold=confidence_threshold)
+            detected_count = len(boxes_data)
+            final_count = detected_count
+
+        inference_time_ms = (time.perf_counter() - start_time) * 1000.0
         density_level, risk_badge, color_rgb = self.classify_density(final_count, capacity_limit)
 
         occupancy_pct = None
         if capacity_limit and capacity_limit > 0:
             occupancy_pct = round((final_count / capacity_limit) * 100.0, 1)
 
-        # Draw annotations if requested
         if draw_annotations:
             annotated = self._draw_annotations(
                 image_rgb=image_rgb.copy(),
@@ -270,6 +295,7 @@ class CrowdDetector:
                 capacity_limit=capacity_limit,
                 occupancy_pct=occupancy_pct,
                 mode=mode,
+                neural_backbone=neural_info["backbone"] if neural_info else None,
             )
         else:
             annotated = image_rgb
@@ -284,6 +310,7 @@ class CrowdDetector:
             "inference_time_ms": round(inference_time_ms, 1),
             "device_used": self.device.upper(),
             "mode_used": mode,
+            "neural_prediction": neural_info,
             "annotated_image": annotated,
         }
 
@@ -299,12 +326,12 @@ class CrowdDetector:
         fps: Optional[float] = None,
         capacity_limit: Optional[int] = None,
         occupancy_pct: Optional[float] = None,
-        mode: str = "standard"
+        mode: str = "standard",
+        neural_backbone: Optional[str] = None,
     ) -> np.ndarray:
         """Renders bounding boxes and an Optical CCTV Heads-Up Display (HUD) banner."""
         h, w = image_rgb.shape[:2]
 
-        # 1. Draw sleek bounding boxes for each person
         for item in boxes:
             x1, y1, x2, y2 = [int(v) for v in item["bbox"]]
             conf = item["confidence"]
@@ -331,17 +358,22 @@ class CrowdDetector:
                 cv2.LINE_AA
             )
 
-        # 2. Draw Top Optical CCTV HUD Banner
         hud_height = 44
         hud_overlay = image_rgb.copy()
         cv2.rectangle(hud_overlay, (0, 0), (w, hud_height), (18, 22, 28), -1)
         cv2.addWeighted(hud_overlay, 0.85, image_rgb, 0.15, 0, image_rgb)
-
-        # Status accent bar
         cv2.rectangle(image_rgb, (0, 0), (8, hud_height), color_rgb, -1)
 
-        mode_tag = " [SLICED HQ]" if mode == "high_density_sliced" else (" [CALIBRATED]" if mode == "calibrated" else "")
-        hud_text = f"CrowdPulse Optical CCTV | Count: {count}{mode_tag}"
+        if neural_backbone:
+            mode_tag = f" [AI:{neural_backbone.upper()}]"
+        elif mode == "high_density_sliced":
+            mode_tag = " [SLICED HQ]"
+        elif mode == "calibrated":
+            mode_tag = " [CALIBRATED]"
+        else:
+            mode_tag = ""
+
+        hud_text = f"CrowdPulse Optical | Count: {count}{mode_tag}"
         if occupancy_pct is not None:
             hud_text += f" ({occupancy_pct}% of {capacity_limit})"
         hud_text += f" | {density_level}"
@@ -350,9 +382,9 @@ class CrowdDetector:
         if fps is not None:
             perf_text += f" | {fps:.1f} FPS"
 
-        cv2.putText(image_rgb, hud_text, (18, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.60, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(image_rgb, hud_text, (18, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.56, (255, 255, 255), 2, cv2.LINE_AA)
 
-        (ptw, _), _ = cv2.getTextSize(perf_text, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
-        cv2.putText(image_rgb, perf_text, (max(w - ptw - 16, 250), 28), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (180, 205, 230), 1, cv2.LINE_AA)
+        (ptw, _), _ = cv2.getTextSize(perf_text, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
+        cv2.putText(image_rgb, perf_text, (max(w - ptw - 16, 250), 28), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (180, 205, 230), 1, cv2.LINE_AA)
 
         return image_rgb

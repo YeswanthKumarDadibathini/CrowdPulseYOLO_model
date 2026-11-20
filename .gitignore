@@ -13,10 +13,12 @@ __pycache__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Heavy Model Weights & Checkpoints (keep .gitkeep)
+# Heavy Model Weights & Checkpoints (keep .gitkeep and metrics JSON)
 models/*
 !models/.gitkeep
+!models/training_metrics.json
 *.pt
+*.pth
 *.onnx
 *.engine
 

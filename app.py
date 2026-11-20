@@ -35,6 +35,7 @@ from database.db_service import (
     seed_mock_history_if_empty,
     update_alert_status,
 )
+from detection.crowd_counter_model import CrowdCountPredictor
 from detection.dataset_loader import (
     get_available_datasets,
     get_dataset_metadata,
@@ -101,9 +102,10 @@ active_alerts = get_active_alerts()
 
 # Helper dictionary mapping UI labels to detector modes
 DETECTION_MODES = {
-    "🎯 High-Density Sliced Mode (Best Headcount Recall)": "high_density_sliced",
+    "🧠 Trained Deep Crowd Model + Optical Boxes (Highest Accuracy)": "trained_hybrid",
+    "🎯 High-Density Sliced YOLO (Best Box Recall)": "high_density_sliced",
     "📊 Calibrated Crowd Estimator (Ultra-Dense Scenes)": "calibrated",
-    "⚡ Standard Optical Mode (Fastest Real-Time)": "standard",
+    "⚡ Standard Optical YOLO (Fastest Real-Time)": "standard",
 }
 
 # ==============================================================================
@@ -135,8 +137,14 @@ with st.sidebar:
     st.divider()
     st.subheader("System Status")
     device_badge = "🚀 CUDA (GPU)" if detector.device == "cuda" else "⚙️ CPU Mode"
+    trained_badge = (
+        f"✅ Loaded (`{detector.count_predictor.backbone_name}`)"
+        if detector.has_trained_counter
+        else "⏳ Not trained yet"
+    )
     st.write("- **Camera Spec:** Standard RGB Optical")
-    st.write(f"- **Engine:** Enhanced YOLOv8n (`person`)")
+    st.write(f"- **Box Detector:** `{detector.yolo_model_name}`")
+    st.write(f"- **Deep Counter:** {trained_badge}")
     st.write(f"- **Active Device:** `{device_badge}`")
     st.write(f"- **Active Incidents:** `{len(active_alerts)}`")
 
@@ -449,10 +457,39 @@ elif menu == "🗺️ Optical Spatial Density & Crush Graph":
 # VIEW 4: Crowd Dataset Benchmark (With Enhanced Accuracy Modes)
 # ==============================================================================
 elif menu == "🖼️ Crowd Dataset Benchmark":
-    st.title("🖼️ Uploaded Crowd Dataset Benchmark (Enhanced Headcount)")
+    st.title("🖼️ Uploaded Crowd Dataset Benchmark (Trained Deep AI + YOLO)")
     st.markdown(
-        "Test our upgraded **High-Density Sliced Inference** and **Optical Calibration** on the **1,198 images** in `Dataset_CrowdPulse/`."
+        "Test our **Fine-Tuned Pretrained Deep Crowd Counter** and **Sliced YOLOv8** on the **1,198 images** in `Dataset_CrowdPulse/`."
     )
+
+    # Display real training & evaluation metrics if trained checkpoint exists
+    training_metrics = CrowdCountPredictor.load_training_metrics()
+    if training_metrics:
+        bm = training_metrics.get("best_metrics", {})
+        with st.expander(
+            f"🏆 Trained Model Benchmark Report — `{training_metrics.get('backbone_name')}` "
+            f"(Overall MAE: {bm.get('overall_mae')} | R²: {bm.get('r2_score']})",
+            expanded=True,
+        ):
+            tm1, tm2, tm3, tm4, tm5 = st.columns(5)
+            tm1.metric("Overall Test MAE", f"{bm.get('overall_mae')} persons")
+            tm2.metric("Overall Test RMSE", f"{bm.get('overall_rmse')} persons")
+            tm3.metric("Part B MAE (CCTV)", f"{bm.get('part_b_mae')} persons")
+            tm4.metric("Part A MAE (Dense)", f"{bm.get('part_a_mae')} persons")
+            tm5.metric("R² Score", f"{bm.get('r2_score')}")
+
+            hist = training_metrics.get("history", [])
+            if hist:
+                hist_df = pd.DataFrame(hist)
+                fig_hist = px.line(
+                    hist_df,
+                    x="epoch",
+                    y=["overall_mae", "part_a_mae", "part_b_mae"],
+                    markers=True,
+                    title=f"Validation MAE Learning Curves on 498 Unseen Test Images ({training_metrics.get('gpu_name')})",
+                    labels={"value": "Mean Absolute Error (persons)", "epoch": "Epoch", "variable": "Metric"},
+                )
+                st.plotly_chart(fig_hist, use_container_width=True)
 
     datasets = get_available_datasets()
     if not datasets:

@@ -27,7 +27,8 @@ Standard security cameras are visible-light optical RGB cameras, **not expensive
 | **Phase 3** | Optical Spatial Density Mapping, Social Proximity Crush Graph, $4 \times 4$ Sector Grid, SQLite ORM Audit Database | ✅ **Completed** |
 | **Phase 4** | Autonomous Multi-Agent Coordination (Monitor, Anomaly, Dispatch Agents), Live Incident Simulator | ✅ **Completed** |
 | **Accuracy** | **High-Density Sliced Inference** (+200% to +8000% small-person recall) & Optical Calibration | ✅ **Enhanced** |
-| **Testing** | Automated unit test suite with **47/47 passing tests** (`pytest -v`) | ✅ **Verified** |
+| **Launcher** | **1-Click Desktop Shortcut** (`CrowdPulse.lnk` with custom multi-resolution icon & `run_crowdpulse.bat`) | ✅ **Created** |
+| **Testing** | Automated unit test suite with **54/54 passing tests** (`pytest -v`) | ✅ **Verified** |
 
 ---
 
@@ -123,20 +124,22 @@ CrowdPulse/
 
 ---
 
-## 🚀 Quick Start Guide (Windows PowerShell)
+## 🚀 Quick Start Guide (1-Click Launch or Terminal)
 
-### Step 1: Open PowerShell in Project Folder
+### Option A: 1-Click Desktop Icon (Easiest)
+Simply double-click the **CrowdPulse** shortcut icon on your Windows Desktop (`CrowdPulse.lnk`).
+- It automatically activates the `.venv` Python environment.
+- Launches the Streamlit dashboard server on port 8501.
+- Automatically opens your default browser at `http://localhost:8501`.
+
+*Alternatively, double-click `run_crowdpulse.bat` inside the project folder.*
+
+---
+
+### Option B: Manual Command Line Launch (PowerShell)
 ```powershell
 cd C:\Users\hp\OneDrive\Desktop\CrowdPulse
-```
-
-### Step 2: Activate the Virtual Environment
-```powershell
 .\.venv\Scripts\Activate.ps1
-```
-
-### Step 3: Launch the Streamlit Web Application
-```powershell
 streamlit run app.py
 ```
 Open **`http://localhost:8501`** in your browser.
@@ -171,4 +174,4 @@ To run the complete test suite:
 pytest -v
 ```
 
-**Result:** `47 passed in ~26s` (validating setup, detection modes, proximity crush graph, database ORM, and multi-agent coordination).
+**Result:** `54 passed in ~38s` (validating setup, detection modes, proximity crush graph, database ORM, multi-agent coordination, and deep crowd counter model).
