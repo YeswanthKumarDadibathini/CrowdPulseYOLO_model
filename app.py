@@ -468,7 +468,7 @@ elif menu == "🖼️ Crowd Dataset Benchmark":
         bm = training_metrics.get("best_metrics", {})
         with st.expander(
             f"🏆 Trained Model Benchmark Report — `{training_metrics.get('backbone_name')}` "
-            f"(Overall MAE: {bm.get('overall_mae')} | R²: {bm.get('r2_score']})",
+            f"(Overall MAE: {bm.get('overall_mae')} | R²: {bm.get('r2_score')})",
             expanded=True,
         ):
             tm1, tm2, tm3, tm4, tm5 = st.columns(5)
